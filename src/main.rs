@@ -23,7 +23,7 @@ async fn actix_web(
     #[shuttle_shared_db::Postgres] pool: PgPool,
     #[shuttle_secrets::Secrets] _secret_store: SecretStore,
 ) -> ShuttleActixWeb<impl FnOnce(&mut ServiceConfig) + Send + Clone + 'static> {
-    sqlx::migrate!().run(&pool).await.unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
 
     let data = Data::new(AppState { db: pool });
 
@@ -47,14 +47,8 @@ struct FoodItem {
     id: i32,
     name: String,
     description: String,
-    price_paisa: Decimal,
-}
-
-#[derive(sqlx::FromRow, Deserialize)]
-struct FoodItemCreate {
-    name: String,
-    description: String,
-    price_paisa: Decimal,
+    price_rupees: i32,
+    is_vegetarian: bool,
 }
 
 #[derive(Deserialize)]
@@ -64,11 +58,11 @@ struct PageQuery {
 }
 
 #[get("/menu")]
-async fn get_food_list(query: Query<PageQuery>, state: Data<AppState>) -> Json<Vec<FoodItem>> {
+async fn get_food_list(query: Query<PageQuery>, state: Data<AppState>) -> impl Responder {
     let page = query.page.unwrap_or(1);
-    let limit = query.limit.unwrap_or(15);
+    let limit = query.limit.unwrap_or(10);
 
-    let list = sqlx::query_as(
+    let list: Vec<FoodItem> = sqlx::query_as(
         r#"
     SELECT * FROM food_items
     LIMIT $1
@@ -76,12 +70,19 @@ async fn get_food_list(query: Query<PageQuery>, state: Data<AppState>) -> Json<V
     "#,
     )
     .bind(limit as i32)
-    .bind((limit * page) as i32)
+    .bind((limit * (page - 1)) as i32)
     .fetch_all(&state.db)
     .await
     .unwrap();
 
-    Json(list)
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM food_items")
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+
+    let pages = f64::ceil(total as f64 / limit as f64) as u64;
+
+    Json(serde_json::json!({"data": list, "total_pages": pages, "current_page": page}))
 }
 
 #[get("/menu/{id}")]
