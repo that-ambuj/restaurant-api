@@ -47,6 +47,7 @@ struct FoodItem {
     id: i32,
     name: String,
     description: String,
+    image: String,
     price_rupees: i32,
     is_vegetarian: bool,
 }
